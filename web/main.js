@@ -63,6 +63,7 @@ function newGame({ layout, mode, level, human, demo = false }) {
   const cells = E.newGame(layout);
   G = { layout, mode, level, human, demo, n: cells.length, busy: false, selected: -1, targets: [], token: (G?.token || 0) + 1, hint: null };
   view.setBoard(cells, pieces());
+  view.resetView(true);
   view.setThinking(-1);
   view.setHint(null);
   updateHud();
@@ -151,22 +152,22 @@ function gameOver() {
 }
 
 // ---------------------------------------------------------------- input
+// Dragging turns the board (scene.js handles that); only clean taps reach the game.
 const canvas = $('#view');
-let downCell = -1;
-canvas.addEventListener('pointerdown', (e) => {
-  sfx.unlock();
+canvas.addEventListener('pointerdown', () => sfx.unlock());
+view.onTap((x, y) => {
   if (screen !== 'game' || !G) return;
   if (G.busy) { view.speed = 4; return; } // tap during a move: fast-forward
-  downCell = view.pick(e.clientX, e.clientY);
-});
-canvas.addEventListener('pointerup', (e) => {
-  if (screen !== 'game' || !G || G.busy || E.winner >= 0 || !isHuman(E.turn)) return;
-  const c = view.pick(e.clientX, e.clientY);
+  if (E.winner >= 0 || !isHuman(E.turn)) return;
+  const c = view.pick(x, y);
   if (c < 0) { deselect(); return; }
   if (G.selected >= 0 && G.targets.some((t) => t.to === c)) return void play(G.selected, c);
-  if (c === downCell && E.piece(c) === E.turn + 1) return select(c);
+  if (E.piece(c) === E.turn + 1) return select(c);
   deselect();
 });
+// a "recentre" button appears once you've turned or zoomed the board
+view.onViewChange((away) => $('#btn-view').classList.toggle('hidden', !away));
+$('#btn-view').onclick = () => { sfx.tap(); view.resetView(); };
 function select(i) {
   G.selected = i;
   G.targets = E.targets(i);

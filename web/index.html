@@ -128,7 +128,8 @@
       <div class="pill bee" id="pill-bee"><span class="who"><svg class="ico" viewBox="0 0 40 40"><use href="#i-bee"/></svg></span><span class="txt"><span class="name" id="name-bee">Bees</span><br><span class="n" id="n-bee">3</span></span></div>
       <div class="pill wasp" id="pill-wasp"><span class="who"><svg class="ico" viewBox="0 0 40 40"><use href="#i-wasp"/></svg></span><span class="txt"><span class="name" id="name-wasp">Wasps</span><br><span class="n" id="n-wasp">3</span></span></div>
     </div>
-    <div style="display:flex;justify-content:center"><span id="status">Your move</span></div>
+    <div style="display:flex;justify-content:center;align-items:center;gap:8px"><span id="status">Your move</span>
+      <button class="icon-btn hidden" id="btn-view" aria-label="Recentre the board" style="width:36px;height:36px;border-radius:12px;margin-top:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button></div>
   </div>
   <div id="tools">
     <button class="tool" id="btn-undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg>Undo</button>
@@ -167,6 +168,7 @@
     <li><b>Teal, two away:</b> it flies there and leaves its old cell empty.</li>
     <li>Every enemy <b>touching the cell you land on</b> switches to your side.</li>
     <li>If a side can't move, the game ends and the other side takes every empty cell. <b>Most cells wins.</b></li>
+    <li>Drag to turn and tilt the board, pinch to zoom. The ⊕ button straightens it again.</li>
     <li>Tap during an animation to speed it up.</li>
   </ul>
   <div class="row"><button class="go" id="howto-ok">Got it</button></div>

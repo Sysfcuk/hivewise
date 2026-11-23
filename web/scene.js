@@ -158,7 +158,7 @@ export function createScene(canvas, { mobile = false } = {}) {
   let sel = -1, targets = [], hint = null, lastMove = null, thinking = -1;
   let speed = 1, clockT = 0, gen = 0; // gen changes with every new board, cancelling old animations
 
-  const actor = (type, i) => ({ type, yaw: REST_YAW + (Math.random() - 0.5) * 0.9, restYaw: REST_YAW + (Math.random() - 0.5) * 0.9, lift: 0, scale: 0, hopAt: -9, spinAt: -9, swapTo: 0, phase: Math.random() * 10, i });
+  const actor = (type, i) => ({ type, yaw: REST_YAW + (Math.random() - 0.5) * 0.9, jitter: (Math.random() - 0.5) * 0.9, lift: 0, scale: 0, hopAt: -9, spinAt: -9, swapTo: 0, phase: Math.random() * 10, i });
 
   function buildIsland(maxR) {
     if (island) { board.remove(island); island.traverse((o) => o.geometry?.dispose()); }
@@ -255,23 +255,27 @@ export function createScene(canvas, { mobile = false } = {}) {
     tilt.wx = (e.clientX / innerWidth - 0.5) * 0.8; tilt.wy = (e.clientY / innerHeight - 0.5) * 0.8;
   }, { passive: true });
 
-  let camDist = 20, elev = 1.12, padTop = 0, padBottom = 0;
+  // The play camera orbits the board: drag to turn and tilt it, pinch (or scroll) to zoom.
+  // The board always fits whichever way it's turned, because the fit uses its radius.
+  const ELEV0 = 1.0;                       // default tilt: a little lower than straight down, so it reads as 3D
+  const orbit = { yaw: 0, elev: ELEV0, zoom: 1, vyaw: 0, velev: 0, resetting: false, dragging: false };
+  let camDist = 20, padTop = 0, padBottom = 0, lookShift = 0, onViewChange = null;
+  const isDefaultView = () => Math.abs(orbit.yaw) < 0.05 && Math.abs(orbit.elev - ELEV0) < 0.05 && Math.abs(orbit.zoom - 1) < 0.05;
   function fit() {
     const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
     camera.aspect = w / h;
-    let maxX = 1, maxZ = 1;
-    for (const c of cells) { maxX = Math.max(maxX, Math.abs(c.pos.x)); maxZ = Math.max(maxZ, Math.abs(c.pos.z)); }
+    let maxR = 1;
+    for (const c of cells) maxR = Math.max(maxR, c.pos.length());
     // a cell reaches S beyond its centre, and the wax slab under the board another ~S past that
-    const halfW = maxX + S * 2.1, halfD = maxZ + S * 1.6;
+    const half = maxR + S * 1.9;
     const vfov = THREE.MathUtils.degToRad(camera.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
     // leave room for the HUD bars: the board fits the band between them
     const usable = Math.max(0.5, 1 - (padTop + padBottom) / h);
-    const dW = halfW / Math.tan(hfov / 2);
-    const dH = (halfD * Math.sin(elev) + 0.8) / (Math.tan(vfov / 2) * usable);
-    camDist = Math.max(dW, dH) * 1.04;
-    // shift the view so the board centres in the free band
-    const shift = ((padTop - padBottom) / h) * 2 * Math.tan(vfov / 2) * camDist * 0.5;
-    look.set(0, 0, -shift * 0.9);
+    const dW = half / Math.tan(hfov / 2);
+    const dH = (half * Math.sin(ELEV0) + 0.8) / (Math.tan(vfov / 2) * usable);
+    camDist = Math.max(dW, dH) * 1.02;
+    // shift the view so the board centres in the free band between the bars
+    lookShift = ((padTop - padBottom) / h) * 2 * Math.tan(vfov / 2) * camDist * 0.45;
     camera.updateProjectionMatrix();
   }
 
@@ -283,12 +287,83 @@ export function createScene(canvas, { mobile = false } = {}) {
       const d = camDist * 1.08, e = 0.62;
       camera.position.set(Math.sin(a) * d * Math.cos(e), d * Math.sin(e) + 1, Math.cos(a) * d * Math.cos(e));
       camera.lookAt(0, -0.8, 0);
+      camAzimuth = a;
       return;
     }
-    const yaw = tilt.x * 0.12, e = elev - tilt.y * 0.05;
-    camera.position.set(look.x + Math.sin(yaw) * camDist * Math.cos(e), camDist * Math.sin(e), look.z + Math.cos(yaw) * camDist * Math.cos(e));
+    if (orbit.resetting) {
+      const k = Math.min(1, dt * 6);
+      orbit.yaw += (Math.atan2(Math.sin(-orbit.yaw), Math.cos(-orbit.yaw))) * k;
+      orbit.elev += (ELEV0 - orbit.elev) * k; orbit.zoom += (1 - orbit.zoom) * k;
+      if (isDefaultView()) { orbit.yaw = 0; orbit.elev = ELEV0; orbit.zoom = 1; orbit.resetting = false; }
+    } else if (!orbit.dragging) {
+      // a flick keeps turning for a moment
+      orbit.yaw += orbit.vyaw * dt; orbit.elev = clampElev(orbit.elev + orbit.velev * dt);
+      const f = Math.exp(-dt * 4); orbit.vyaw *= f; orbit.velev *= f;
+    }
+    const yaw = orbit.yaw + tilt.x * 0.12, e = clampElev(orbit.elev - tilt.y * 0.05), d = camDist * orbit.zoom;
+    const s = lookShift * orbit.zoom;
+    look.set(-Math.sin(yaw) * s, 0, -Math.cos(yaw) * s);
+    camera.position.set(look.x + Math.sin(yaw) * d * Math.cos(e), d * Math.sin(e), look.z + Math.cos(yaw) * d * Math.cos(e));
     camera.lookAt(look);
+    camAzimuth = yaw;
   }
+  let camAzimuth = 0;
+  const clampElev = (e) => Math.min(1.28, Math.max(0.45, e)); // never quite flat-on, never below the rim
+
+  // ---------------------------------------------------------------- gestures
+  // One finger drags the view; a short touch that barely moves is a tap (handed to onTap).
+  // Two fingers pinch to zoom. The mouse wheel zooms too.
+  const touches = new Map();
+  let gesture = null, onTap = null, pinchD = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture?.(e.pointerId);
+    touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touches.size === 1) gesture = { x0: e.clientX, y0: e.clientY, t0: performance.now(), moved: false, multi: false, lx: e.clientX, ly: e.clientY, lt: performance.now() };
+    else if (gesture) { gesture.multi = true; const [a, b] = [...touches.values()]; pinchD = Math.hypot(a.x - b.x, a.y - b.y); }
+    orbit.vyaw = orbit.velev = 0; orbit.resetting = false;
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = touches.get(e.pointerId);
+    if (!p || !gesture || view !== 'play') return;
+    p.x = e.clientX; p.y = e.clientY;
+    if (touches.size >= 2) {
+      const [a, b] = [...touches.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchD > 0) orbit.zoom = Math.min(1.4, Math.max(0.55, orbit.zoom * (pinchD / d)));
+      pinchD = d; gesture.moved = true; changed();
+      return;
+    }
+    if (!gesture.moved && Math.hypot(e.clientX - gesture.x0, e.clientY - gesture.y0) < 9) return;
+    gesture.moved = true; orbit.dragging = true;
+    const now = performance.now(), dx = e.clientX - gesture.lx, dy = e.clientY - gesture.ly, dts = Math.max(0.001, (now - gesture.lt) / 1000);
+    orbit.yaw -= dx * 0.0075;
+    orbit.elev = clampElev(orbit.elev + dy * 0.0032);
+    orbit.vyaw = orbit.vyaw * 0.5 + (-dx * 0.0075 / dts) * 0.5;
+    orbit.velev = orbit.velev * 0.5 + (dy * 0.0032 / dts) * 0.5;
+    gesture.lx = e.clientX; gesture.ly = e.clientY; gesture.lt = now;
+    changed();
+  });
+  const release = (e) => {
+    const had = touches.delete(e.pointerId);
+    if (!had || !gesture) return;
+    if (touches.size === 0) {
+      const tap = !gesture.moved && !gesture.multi && performance.now() - gesture.t0 < 700;
+      // a slow release shouldn't fling
+      if (performance.now() - gesture.lt > 90) orbit.vyaw = orbit.velev = 0;
+      orbit.dragging = false; gesture = null; pinchD = 0;
+      if (tap) onTap?.(e.clientX, e.clientY);
+    } else pinchD = 0;
+  };
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', (e) => { if (gesture) gesture.moved = true; release(e); });
+  canvas.addEventListener('wheel', (e) => {
+    if (view !== 'play') return;
+    e.preventDefault();
+    orbit.zoom = Math.min(1.4, Math.max(0.55, orbit.zoom * (1 + e.deltaY * 0.001)));
+    changed();
+  }, { passive: false });
+  let wasDefault = true;
+  function changed() { const d = isDefaultView(); if (d !== wasDefault) { wasDefault = d; onViewChange?.(!d); } }
 
   function resize() {
     const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
@@ -493,6 +568,7 @@ export function createScene(canvas, { mobile = false } = {}) {
 
       // pieces
       let nb = 0, nw = 0;
+      const faceYaw = Math.atan2(-Math.cos(camAzimuth), Math.sin(camAzimuth));
       for (let i = 0; i < n; i++) {
         const a = actors[i];
         // a spinning piece changes sides half way round
@@ -503,7 +579,8 @@ export function createScene(canvas, { mobile = false } = {}) {
         const c = cells[i].pos;
         const selected = i === sel;
         a.lift += ((selected ? 0.32 : 0) - a.lift) * Math.min(1, rdt * 10);
-        if (!selected && spin >= 1) a.yaw += (a.restYaw - a.yaw) * Math.min(1, dt * 1.2);
+        // at rest, every piece turns (the short way round) to face the camera, with its own slight angle
+        if (!selected && spin >= 1) { const want = faceYaw + a.jitter; a.yaw += Math.atan2(Math.sin(want - a.yaw), Math.cos(want - a.yaw)) * Math.min(1, dt * 2.2); }
         const hopU = clamp01((t - a.hopAt) / 0.42);
         const hop = hopU < 1 ? Math.sin(hopU * Math.PI) * 0.35 : 0;
         const cheer = a.cheer && t - a.cheer < 2.2 ? Math.abs(Math.sin((t - a.cheer) * 9 + a.phase)) * 0.22 : 0;
@@ -556,6 +633,16 @@ export function createScene(canvas, { mobile = false } = {}) {
     setThinking(side) { thinking = side; },
     /** 'title' slowly circles the island; 'play' frames the board for the HUD. */
     setView(v, pads = {}) { view = v; padTop = pads.top || 0; padBottom = pads.bottom || 0; fit(); },
+    /** Called with (clientX, clientY) for a tap that wasn't a drag or pinch. */
+    onTap(fn) { onTap = fn; },
+    /** Called with true when the player has turned/zoomed away from the default view, false when back. */
+    onViewChange(fn) { onViewChange = fn; },
+    /** Glide back to the default view. */
+    resetView(instant = false) {
+      orbit.vyaw = orbit.velev = 0;
+      if (instant) Object.assign(orbit, { yaw: 0, elev: ELEV0, zoom: 1, resetting: false }); else orbit.resetting = true;
+      wasDefault = true; onViewChange?.(false);
+    },
     set speed(v) { speed = v; },
     get speed() { return speed; },
     /** Settle every piece to match the engine (after undo). */
