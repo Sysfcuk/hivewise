@@ -1,6 +1,8 @@
 // Offline support: network first (so updates show straight away), cached copy when offline.
-const CACHE = 'hivewise-v2';
-const CORE = ['./', './index.html', './main.js', './engine.js', './art.js', './stage.js', './meadow.js', './vendor/pixi.min.mjs', './hivewise.wasm', './levels.txt', './manifest.webmanifest', './icons/icon.svg'];
+const CACHE = 'hivewise-v3';
+const CORE = ['./', './index.html', './main.js', './engine.js', './ai.worker.js', './scene.js', './models.js', './hivewise.wasm',
+  './vendor/three/build/three.module.js', './vendor/three/examples/jsm/environments/RoomEnvironment.js', './vendor/three/examples/jsm/utils/BufferGeometryUtils.js',
+  './manifest.webmanifest', './icons/icon.svg'];
 
 self.addEventListener('install', (e) => e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting())));
 self.addEventListener('activate', (e) => e.waitUntil(

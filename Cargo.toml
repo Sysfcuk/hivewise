@@ -2,14 +2,14 @@
 name = "hivewise"
 version = "0.1.0"
 edition = "2021"
-description = "Hivewise: a hexagonal bee puzzle game. Rust core compiled to WebAssembly."
+description = "Hivewise: bees vs wasps on a hexagonal board. Rust core compiled to WebAssembly."
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "verify"
-path = "src/bin/verify.rs"
+name = "selfplay"
+path = "src/bin/selfplay.rs"
 
 [profile.release]
 opt-level = "s"

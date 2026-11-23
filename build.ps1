@@ -1,16 +1,14 @@
-# Build Hivewise: run the rules tests, check every level with the solver, compile the Rust core
-# to WebAssembly and copy it next to the web files.
-#   .\build.ps1            build
-#   .\build.ps1 -WritePar  also store each level's par (shortest solution) in web/levels.txt
-param([switch]$WritePar)
+# Build Hivewise: run the rules/AI tests, compile the Rust core to WebAssembly and copy it next
+# to the web files.
+#   .\build.ps1             build
+#   .\build.ps1 -SelfPlay   also run the AI self-play benchmark
+param([switch]$SelfPlay)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-cargo test --lib --quiet
+cargo test --release --lib --quiet
 if ($LASTEXITCODE) { throw 'tests failed' }
-
-if ($WritePar) { cargo run --release --quiet --bin verify -- --write } else { cargo run --release --quiet --bin verify }
-if ($LASTEXITCODE) { throw 'a level failed to verify' }
+if ($SelfPlay) { cargo run --release --quiet --bin selfplay; if ($LASTEXITCODE) { throw 'self-play failed' } }
 
 cargo build --release --lib --target wasm32-unknown-unknown --quiet
 if ($LASTEXITCODE) { throw 'wasm build failed' }

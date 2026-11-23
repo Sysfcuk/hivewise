@@ -1,70 +1,53 @@
 # Hivewise
 
-**Spread your hive. Pollinate the meadow. Outwit the wasps.**
+**Bees vs wasps on a floating honeycomb. Spread your hive, take theirs.**
 
 ▶ **[Play on your phone](https://sysfcuk.github.io/hivewise/)**: open it in Chrome or Safari and use "Add to Home Screen" to install it.
 
-Hivewise is a honeycomb puzzle game for phones. The rules are written in Rust and compiled to
-WebAssembly; a thin JavaScript layer handles touch, drawing and sound. There is no build step for the
-web side and no dependencies to install beyond Rust.
+Hivewise is a head-to-head hex strategy game for phones, in full 3D. The rules and the computer
+opponent are written in Rust and compiled to WebAssembly; the 3D world is Three.js (WebGL). There
+is no build step for the web side and nothing to install beyond Rust.
 
 ## Play
 
 ```powershell
-.\build.ps1          # tests, level check, WASM build
+.\build.ps1          # tests, then the WASM build
 python serve.py      # http://localhost:8130
 ```
 
-On a phone on the same Wi-Fi, open `http://<your-pc's-ip>:8130`. It installs as an app (PWA) once
-it's served over HTTPS, for example from GitHub Pages.
+On a phone on the same Wi-Fi, open `http://<your-pc's-ip>:8130`.
 
 ## Rules
 
-- **Buzz:** tap a bee, then a glowing cell next to it. The bee hops there and leaves a copy behind.
-- **Fly:** cells two steps away glow with a dashed ring. Flying moves the bee without a copy.
-- **Pollinate:** wherever a bee lands, every flower (and wasp) touching that cell joins your hive.
-- **Honey:** a bee on a golden honey cell is stuck for good. It can still be won over, but it can't move.
-- **Wasps** answer every move, predictably: they make whichever move grabs the most bees and
-  flowers (a buzz beats a fly on a tie). If no move would grab anything, they rest.
-- **Win** by leaving no flowers and no wasps. Each move costs a drop of nectar; match the level's
-  par for three stars. Undo is free, and Hint asks the solver for the best next move.
+- Bees and wasps take turns; bees go first. Tap one of your pieces, then a glowing cell.
+- **Buzz** (green ring, next door): your piece hops over and leaves a copy behind.
+- **Fly** (teal ring, two cells away): it flies there and leaves its old cell empty.
+- Every enemy piece **touching the cell you land on** switches to your side.
+- If the side to move can't move, the game ends and every empty cell goes to the other side.
+  The game also ends when the board is full or one side is wiped out. **Most cells wins.**
+
+Play the computer (Easy, Medium, Hard or Expert, as bees or wasps) or a friend on the same phone.
+There are four boards: **Classic** (three gaps in the middle), **Quick** (small and fast), **Open**
+(no gaps) and **Flower** (six gaps like petals). Undo is free, and Hint asks the AI for a good move.
 
 ## How it's built
 
 | Part | What it does |
 | --- | --- |
-| `src/core.rs` | Rules, level parser, iterative-deepening solver. The board is a set of `u128` bitmasks (up to 128 cells), so positions are cheap to copy and hash. |
-| `src/lib.rs` | The WebAssembly interface: plain `extern "C"` functions, one byte buffer in, one `i32` buffer out. No wasm-bindgen. |
-| `src/bin/verify.rs` | Solves every level, reports its shortest solution and (with `--write`) stores it as the par. |
-| `web/levels.txt` | The levels, as text (format at the top of the file). |
-| `web/engine.js` | Loads `hivewise.wasm` and wraps the exports. |
-| `web/main.js` | Screens, input, the animation clock, sound, saved progress. Also a Canvas 2D board renderer used when WebGL isn't available (or with `?canvas` in the URL). |
-| `web/stage.js` | The WebGL board renderer (PixiJS, vendored in `web/vendor/`): territory glow, flight shadows, the capture chain, wasp warnings. |
-| `web/meadow.js` | The animated background: seasons, parallax hills, sun rays, drifting blossom, leaves or fireflies. |
-| `web/art.js` | All the art (cells, bees, flowers, wasps, meadow), drawn in code and painted into textures at the screen's resolution. |
+| `src/core.rs` | Rules, boards, and the AI: alpha-beta search with iterative deepening and a node budget per difficulty. Positions are two `u128` bitmasks, so they're cheap to copy. |
+| `src/lib.rs` | The WebAssembly interface: plain `extern "C"` functions and one `i32` output buffer. No wasm-bindgen. |
+| `src/bin/selfplay.rs` | Plays the difficulty levels against each other on every board, to check each is stronger than the one below and fast enough. |
+| `web/engine.js` | Loads `hivewise.wasm`, wraps the exports, and runs the AI in a Web Worker (`ai.worker.js`) so the animation never stutters while it thinks. |
+| `web/scene.js` | The 3D world: a floating wax-and-rock island over a meadow, sky, sun and shadows, and every animation (flights, flips, end-of-game fill, celebrations). Cells, bodies, wings and rings are instanced meshes, so the whole board is a handful of draw calls. |
+| `web/models.js` | The bee and wasp, built from primitives in code with their stripes and faces baked into vertex colours. |
+| `web/main.js` | Screens, turns, input, undo, hints, sound (a tiny synth, no audio files) and saved settings. |
+| `web/vendor/three/` | Three.js r170, the few modules the game uses. |
 
-### Graphics that help you play
+Tap during an animation to fast-forward it. The title screen plays a live game between two AIs on a
+random board.
 
-- **Territory glow:** cells your hive owns glow warm honey, and wasp ground glows faintly red, so the board's balance reads at a glance.
-- **Flight shadows:** a flying bee's shadow shrinks with height. Buzzes skim low and flights arc high, so the two moves look different.
-- **Capture chain:** flowers bloom open into bees with a burst of petals, notes climb with each one, and a "+N" rises from where you landed.
-- **Wasp warnings:** a red **!** marks any move the wasps can punish. Press and hold it (or hover with a mouse) to see the wasp's strike line and the bees it would take; slide off to cancel.
-- **Honey and wax:** a WebGL shader gives honey slow ripples, a sliding sheen and glints; wax cells glow softly in the middle. A bee that lands in honey sinks in with a splash.
-- **Reactions:** bees turn to look at the bee you pick up, cheer with little hops after a big capture, and flinch after a wasp strike. Badly outnumbered wasps sulk.
-- **Winning:** honey pours into every cell your hive owns, rippling out from your last landing, while petals drift down.
-- **The meadow:** each chapter has its own season (spring blossom, summer pollen, autumn leaves, evening fireflies). The hills shift with the phone's tilt (or the mouse); the board never moves.
-- **The hive map:** solved levels fill with honey, three-star levels shimmer, a meter shows how full your hive is, and a bee waits by the next level.
-- **Never in the way:** tap during an animation to fast-forward it. "Reduce motion" on the phone shortens every animation.
+### Testing
 
-### Making levels
-
-Edit `web/levels.txt`, then run `.\build.ps1 -WritePar`. The verifier fails the build if any level
-can't be solved, and writes each level's par (its shortest solution).
-
-```text
-= Level name
-> A tip shown when the level starts.
-| - F . -        -  no cell    .  empty    o  honey
-|  B . F         B  bee        F  flower   W  wasp     (Bo, Fo, Wo: on honey)
-| - F . -        odd rows sit half a cell to the right
-```
+`.\build.ps1 -SelfPlay` also runs the AI benchmark. While `serve.py` is running, the page can save
+full-resolution screenshots of the 3D canvas to `shots/`: in the console,
+`hivewise.view.snapshot().then((b) => fetch('/__shot?name=x.png', { method: 'POST', body: b }))`.

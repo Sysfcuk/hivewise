@@ -1,13 +1,13 @@
 {
   "name": "Hivewise",
   "short_name": "Hivewise",
-  "description": "A honeycomb puzzle: spread your hive, pollinate the meadow, outwit the wasps.",
+  "description": "Bees vs wasps on a floating honeycomb. Spread your hive, take theirs.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#fff6d6",
-  "theme_color": "#ffe9a8",
+  "background_color": "#9fd3f5",
+  "theme_color": "#9fd3f5",
   "icons": [
     { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },

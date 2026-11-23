@@ -1,72 +1,75 @@
-// Bridge to the Rust core (hivewise.wasm). All game rules live in Rust; this file only moves
+// Bridge to the Rust core (hivewise.wasm). All rules and the AI live in Rust; this file only moves
 // numbers across the boundary. See src/lib.rs for the exported functions.
 
-export const PIECE = { NONE: 0, BEE: 1, FLOWER: 2, WASP: 3 };
-export const STATUS = { PLAYING: 0, WON: 1, STUCK: 2, OUT: 3 };
+export const EMPTY = 0, BEE = 1, WASP = 2;            // what hw_piece returns
+export const LAYOUTS = ['Classic', 'Quick', 'Open', 'Flower'];
+export const LEVELS = ['Easy', 'Medium', 'Hard', 'Expert'];
 
-export async function loadEngine(url = './hivewise.wasm') {
+export async function loadEngine(url = new URL('./hivewise.wasm', import.meta.url)) {
   const res = await fetch(url);
-  const { instance } = WebAssembly.instantiateStreaming && res.headers.get('content-type')?.includes('wasm')
+  const { instance } = res.headers.get('content-type')?.includes('wasm') && WebAssembly.instantiateStreaming
     ? await WebAssembly.instantiateStreaming(res, {})
     : await WebAssembly.instantiate(await res.arrayBuffer(), {});
   const x = instance.exports;
-  const mem = () => x.memory.buffer;
-  const out = (n) => Array.from(new Int32Array(mem(), x.hw_out(), Math.max(0, n)));
-  const enc = new TextEncoder();
+  const out = (n) => Array.from(new Int32Array(x.memory.buffer, x.hw_out(), Math.max(0, n)));
 
   return {
-    /** Load one level block. Returns false if the text is not a valid level. */
-    load(text) {
-      const bytes = enc.encode(text);
-      const ptr = x.hw_alloc(bytes.length);
-      new Uint8Array(mem(), ptr, bytes.length).set(bytes);
-      return x.hw_load(bytes.length) === 0;
+    /** New game on a layout; returns cell coordinates [{q, r}]. */
+    newGame(layout = 0) {
+      x.hw_new(layout);
+      const v = out(x.hw_coords());
+      const cells = [];
+      for (let k = 0; k < v.length; k += 2) cells.push({ q: v[k], r: v[k + 1] });
+      return cells;
     },
-    get w() { return x.hw_w(); },
-    get h() { return x.hw_h(); },
-    get par() { return x.hw_par(); },
-    get nectar() { return x.hw_nectar(); },
-    get moves() { return x.hw_moves(); },
-    get status() { return x.hw_status(); },
-    /** { exists, honey } */
-    cell(i) { const f = x.hw_cell(i); return { exists: !!(f & 1), honey: !!(f & 2) }; },
     piece(i) { return x.hw_piece(i); },
-    /** [{ to, fly }] */
+    /** 0 bees, 1 wasps */
+    get turn() { return x.hw_turn(); },
+    count(side) { return x.hw_count(side); },
+    get movesMade() { return x.hw_moves_made(); },
+    /** -1 playing, 0 bees won, 1 wasps won, 2 draw */
+    get winner() { return x.hw_winner(); },
     targets(from) { return out(x.hw_targets(from)).map((v) => ({ to: v & 255, fly: !!(v >> 8) })); },
     /** Play a move; returns what happened, in order, for the animation (or null if illegal). */
-    play(from, to) { return decode(x.hw_play(from, to)); },
-    /** What play() would return, without changing anything. */
-    preview(from, to) { return decode(x.hw_preview(from, to)); },
-    undo() { return !!x.hw_undo(); },
-    restart() { x.hw_restart(); },
-    /** Best next move, or null. The solver runs in Rust; budget is in search nodes. */
-    hint(budget = 3_000_000) { const v = x.hw_hint(budget); return v < 0 ? null : { from: v >> 8, to: v & 255 }; },
-  };
-
-  function decode(n) {
+    play(from, to) {
+      const n = x.hw_play(from, to);
       if (n < 0) return null;
       const v = out(n);
       let k = 0;
-      const bee = { from: v[k++], to: v[k++], buzz: !!v[k++] };
+      const move = { from: v[k++], to: v[k++], buzz: !!v[k++] };
       const flips = v.slice(k + 1, k + 1 + v[k]); k += 1 + v[k];
-      let wasp = null, waspFlips = [];
-      if (v[k++]) {
-        wasp = { from: v[k++], to: v[k++], buzz: !!v[k++] };
-        waspFlips = v.slice(k + 1, k + 1 + v[k]);
-      }
-      return { bee, flips, wasp, waspFlips };
-  }
+      const over = !!v[k++], winner = v[k++], filledBy = v[k++];
+      const filled = v.slice(k + 1, k + 1 + v[k]);
+      return { move, flips, over, winner, filledBy, filled };
+    },
+    undo() { return !!x.hw_undo(); },
+    /** The position as 9 numbers, for the AI worker. */
+    state() { return out(x.hw_state()); },
+    setState(s) { x.hw_set_state(...s); },
+    /** AI move for the side to move, or null. Runs synchronously: use the worker in the page. */
+    ai(level, seed = (Math.random() * 1e9) | 0) { const v = x.hw_ai(level, seed); return v < 0 ? null : { from: v >> 8, to: v & 255 }; },
+  };
 }
 
-/** Split levels.txt into blocks with their names (the Rust side does the real parsing). */
-export function splitLevels(text) {
-  const blocks = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (line.startsWith('=')) blocks.push({ name: line.slice(1).trim(), tips: [], text: '' });
-    const b = blocks[blocks.length - 1];
-    if (!b) continue;
-    b.text += line + '\n';
-    if (line.startsWith('>')) b.tips.push(line.slice(1).trim());
-  }
-  return blocks;
+/** The AI in a Web Worker, so animations never stutter while it thinks. Falls back to the page. */
+export function createAi(engine) {
+  let worker = null, seq = 0;
+  const pending = new Map();
+  try {
+    worker = new Worker(new URL('./ai.worker.js', import.meta.url), { type: 'module' });
+    worker.onmessage = (e) => { const p = pending.get(e.data.id); if (p) { pending.delete(e.data.id); p(e.data.move); } };
+    worker.onerror = () => { worker = null; for (const p of pending.values()) p(undefined); pending.clear(); };
+  } catch { worker = null; }
+  return {
+    /** Resolves to { from, to } or null. */
+    think(layout, level) {
+      const state = engine.state();
+      if (!worker) return Promise.resolve(engine.ai(level));
+      const id = ++seq;
+      return new Promise((resolve) => {
+        pending.set(id, (move) => resolve(move === undefined ? engine.ai(level) : move));
+        worker.postMessage({ id, layout, level, state, seed: (Math.random() * 1e9) | 0 });
+      });
+    },
+  };
 }
