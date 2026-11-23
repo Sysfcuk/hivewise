@@ -5,7 +5,28 @@
 // whole board is a handful of draw calls no matter how many pieces are on it.
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { beeBody, waspBody, wingGeometry, WING_MOUNTS } from './models.js';
+import { beeBody, beeFur, furMaterial, waspBody, wingGeometry, WING_MOUNTS } from './models.js';
+import { createWorld } from './world.js';
+import { createSwarm } from './swarm.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// Tilt-shift: blur that grows above and below a sharp band through the board, the look of a
+// miniature photographed up close. Run twice (across, then down) for a cheap separable blur.
+const TiltShift = {
+  uniforms: { tDiffuse: { value: null }, uDir: { value: new THREE.Vector2(1, 0) }, uFocus: { value: 0.5 }, uBand: { value: 0.2 }, uAmount: { value: 4 }, uRes: { value: new THREE.Vector2(1, 1) } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform vec2 uDir; uniform float uFocus; uniform float uBand; uniform float uAmount; uniform vec2 uRes; varying vec2 vUv;
+    void main() {
+      float r = smoothstep(uBand, uBand + 0.32, abs(vUv.y - uFocus)) * uAmount;
+      if (r < 0.05) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
+      vec4 c = vec4(0.); float tw = 0.;
+      for (int i = -4; i <= 4; i++) { float w = exp(-float(i * i) / 8.); c += texture2D(tDiffuse, vUv + uDir * float(i) * r / uRes) * w; tw += w; }
+      gl_FragColor = c / tw;
+    }`,
+};
 
 const S = 0.6;                    // cell circumradius (world units)
 const SQ3 = Math.sqrt(3);
@@ -29,7 +50,7 @@ export function axialToWorld(q, r) { return new THREE.Vector3(1.5 * S * q, 0, SQ
 export function createScene(canvas, { mobile = false } = {}) {
   // ---------------------------------------------------------------- renderer
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  const dprCap = mobile ? 2 : 2.5;
+  const dprCap = mobile ? 1.75 : 2.5;
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, dprCap));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -125,6 +146,16 @@ export function createScene(canvas, { mobile = false } = {}) {
   };
   const glowTex = radialTex();
 
+  // ---------------------------------------------------------------- the world around the board, and post effects
+  const world = createWorld(scene, { mobile });
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const tiltH = new ShaderPass(TiltShift), tiltV = new ShaderPass(TiltShift);
+  tiltV.uniforms.uDir.value.set(0, 1);
+  composer.addPass(tiltH); composer.addPass(tiltV);
+  composer.addPass(new OutputPass());
+  const blurPx = mobile ? 3 : 4.5;
+
   // ---------------------------------------------------------------- shared geometry/materials
   const hexShape = (r) => {
     const s = new THREE.Shape();
@@ -140,10 +171,18 @@ export function createScene(canvas, { mobile = false } = {}) {
   const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
   const ringGeo = new THREE.RingGeometry(S * 0.42, S * 0.56, 40); ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthWrite: false });
-  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0 });
-  const wingMat = new THREE.MeshStandardMaterial({ color: '#e6f6ff', transparent: true, opacity: 0.55, side: THREE.DoubleSide, roughness: 0.15, depthWrite: false });
-  const waspWingMat = new THREE.MeshStandardMaterial({ color: '#d8d6e6', transparent: true, opacity: 0.5, side: THREE.DoubleSide, roughness: 0.2, depthWrite: false });
-  const GEO = { bee: beeBody(), wasp: waspBody(), beeWing: wingGeometry('bee'), waspWing: wingGeometry('wasp') };
+  // bees are soft and fuzzy; wasps are hard and glossy (a clear coat catches the sun)
+  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0 });
+  const waspMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.3, metalness: 0, clearcoat: 0.9, clearcoatRoughness: 0.18 });
+  const furMat = furMaterial(0.05);
+  // wings shimmer with thin-film interference, like a soap bubble
+  const wingMat = new THREE.MeshPhysicalMaterial({ color: '#eef8ff', transparent: true, opacity: 0.5, side: THREE.DoubleSide, roughness: 0.12, depthWrite: false,
+    iridescence: 1, iridescenceIOR: 1.35, iridescenceThicknessRange: [180, 520] });
+  const waspWingMat = new THREE.MeshPhysicalMaterial({ color: '#d9d6ea', transparent: true, opacity: 0.48, side: THREE.DoubleSide, roughness: 0.15, depthWrite: false,
+    iridescence: 0.8, iridescenceIOR: 1.3, iridescenceThicknessRange: [250, 450] });
+  const GEO = { bee: beeBody(), beeFur: beeFur(mobile ? 4 : 6), wasp: waspBody(), beeWing: wingGeometry('bee'), waspWing: wingGeometry('wasp') };
+  // the swarm lives around the island and calls the straw hive home
+  const swarm = createSwarm(scene, { count: mobile ? 22 : 40, bodyGeo: GEO.bee, wingGeo: GEO.beeWing, bodyMat, wingMat, home: world.skepPos });
 
   // ---------------------------------------------------------------- board state
   const board = new THREE.Group();
@@ -205,13 +244,16 @@ export function createScene(canvas, { mobile = false } = {}) {
     let maxR = 0;
     for (const c of cells) maxR = Math.max(maxR, c.pos.length());
     buildIsland(maxR);
+    world.setBoardRadius(maxR, maxR + S * 1.15);
+    swarm.setRadius(maxR + 1.5);
     const cap = n + 8;
     meshes = {
       cells: new THREE.InstancedMesh(cellGeo, cellMat, n),
       glow: new THREE.InstancedMesh(glowGeo, glowMat, n),
       rings: new THREE.InstancedMesh(ringGeo, ringMat, 24),
       bee: new THREE.InstancedMesh(GEO.bee, bodyMat, cap),
-      wasp: new THREE.InstancedMesh(GEO.wasp, bodyMat, cap),
+      beeFur: new THREE.InstancedMesh(GEO.beeFur, furMat, cap),
+      wasp: new THREE.InstancedMesh(GEO.wasp, waspMat, cap),
       beeWing: new THREE.InstancedMesh(GEO.beeWing, wingMat, cap * 2),
       waspWing: new THREE.InstancedMesh(GEO.waspWing, waspWingMat, cap * 2),
     };
@@ -288,6 +330,7 @@ export function createScene(canvas, { mobile = false } = {}) {
       camera.position.set(Math.sin(a) * d * Math.cos(e), d * Math.sin(e) + 1, Math.cos(a) * d * Math.cos(e));
       camera.lookAt(0, -0.8, 0);
       camAzimuth = a;
+      scene.fog.near = d + 4; scene.fog.far = d + 70;
       return;
     }
     if (orbit.resetting) {
@@ -306,6 +349,8 @@ export function createScene(canvas, { mobile = false } = {}) {
     camera.position.set(look.x + Math.sin(yaw) * d * Math.cos(e), d * Math.sin(e), look.z + Math.cos(yaw) * d * Math.cos(e));
     camera.lookAt(look);
     camAzimuth = yaw;
+    // fog starts just past the board, wherever the camera is, so zooming out never washes it out
+    const cd = camera.position.length(); scene.fog.near = cd + 4; scene.fog.far = cd + 70;
   }
   let camAzimuth = 0;
   const clampElev = (e) => Math.min(1.28, Math.max(0.45, e)); // never quite flat-on, never below the rim
@@ -329,7 +374,7 @@ export function createScene(canvas, { mobile = false } = {}) {
     if (touches.size >= 2) {
       const [a, b] = [...touches.values()];
       const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinchD > 0) orbit.zoom = Math.min(1.4, Math.max(0.55, orbit.zoom * (pinchD / d)));
+      if (pinchD > 0) orbit.zoom = Math.min(1.8, Math.max(0.55, orbit.zoom * (pinchD / d)));
       pinchD = d; gesture.moved = true; changed();
       return;
     }
@@ -359,7 +404,7 @@ export function createScene(canvas, { mobile = false } = {}) {
   canvas.addEventListener('wheel', (e) => {
     if (view !== 'play') return;
     e.preventDefault();
-    orbit.zoom = Math.min(1.4, Math.max(0.55, orbit.zoom * (1 + e.deltaY * 0.001)));
+    orbit.zoom = Math.min(1.8, Math.max(0.55, orbit.zoom * (1 + e.deltaY * 0.001)));
     changed();
   }, { passive: false });
   let wasDefault = true;
@@ -368,6 +413,9 @@ export function createScene(canvas, { mobile = false } = {}) {
   function resize() {
     const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
     renderer.setSize(w, h, false);
+    composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h);
+    const pr = renderer.getPixelRatio();
+    for (const p of [tiltH, tiltV]) { p.uniforms.uRes.value.set(w * pr, h * pr); p.uniforms.uAmount.value = blurPx * pr; }
     fit();
   }
   addEventListener('resize', resize);
@@ -478,6 +526,8 @@ export function createScene(canvas, { mobile = false } = {}) {
       await wait(70);
       if (stale()) return;
     }
+    // a big capture brings the swarm sweeping over
+    if (res.flips.length >= 3 && side === 0) swarm.swoop(cells[move.to].pos, clockT);
     if (res.flips.length) await wait(300);
     if (stale()) return;
     if (res.over && res.filled.length) {
@@ -497,6 +547,10 @@ export function createScene(canvas, { mobile = false } = {}) {
   function celebrate(winnerSide) {
     const t = sideType(winnerSide);
     actors.forEach((a, k) => { if (a.type === t) { a.hopAt = clockT + (k % 9) * 0.06; a.cheer = clockT; } });
+    // the swarm circles over the winning side's territory (or the middle for a draw or a wasp win)
+    const mid = new THREE.Vector3(); let cnt = 0;
+    actors.forEach((a, i) => { if (a.type === t) { mid.add(cells[i].pos); cnt++; } });
+    swarm.celebrate(winnerSide === 0 && cnt ? mid.divideScalar(cnt) : mid.set(0, 0, 0), clockT);
     const colors = winnerSide === 0 ? ['#ffd23f', '#ff7aa2', '#ffffff', '#9b7bff'] : ['#ff6a1a', '#ffd000', '#d4141c'];
     for (let k = 0; k < 6; k++) setTimeout(() => {
       const c = cells[(Math.random() * n) | 0].pos;
@@ -516,6 +570,7 @@ export function createScene(canvas, { mobile = false } = {}) {
 
   function writePiece(kind, idx, wingIdx, m, flap, t) {
     meshes[kind].setMatrixAt(idx, m);
+    if (kind === 'bee') meshes.beeFur.setMatrixAt(idx, m);
     const mounts = WING_MOUNTS[kind];
     for (let w = 0; w < 2; w++) {
       const mt = mounts[w];
@@ -527,8 +582,23 @@ export function createScene(canvas, { mobile = false } = {}) {
     }
   }
 
+  // If frames stay slow (an older phone), drop the blur and render at a lower resolution.
+  let frameEma = 1 / 60, watchT = 0, lowered = false;
+  function watchPerformance(rdt) {
+    if (lowered || document.hidden) return;
+    watchT += rdt;
+    if (watchT < 2) return; // ignore start-up hiccups (shaders compiling)
+    frameEma += (rdt - frameEma) * 0.05;
+    if (watchT > 6 && frameEma > 1 / 34) {
+      lowered = true;
+      tiltH.enabled = tiltV.enabled = false;
+      renderer.setPixelRatio(Math.min(1.25, devicePixelRatio || 1));
+      resize();
+    }
+  }
   function update(now) {
     const rdt = Math.min(0.05, Math.max(0, (now - last) / 1000)); last = now;
+    watchPerformance(rdt);
     const dt = rdt * speed;
     clockT += dt;
     const t = clockT;
@@ -606,15 +676,20 @@ export function createScene(canvas, { mobile = false } = {}) {
         else { writePiece('wasp', nw, nw * 2, M, 1, t * 56); nw++; }
         if (u >= 1) f.done();
       }
-      meshes.bee.count = nb; meshes.wasp.count = nw;
+      meshes.bee.count = nb; meshes.beeFur.count = nb; meshes.wasp.count = nw;
       meshes.beeWing.count = nb * 2; meshes.waspWing.count = nw * 2;
-      for (const k of ['bee', 'wasp', 'beeWing', 'waspWing']) meshes[k].instanceMatrix.needsUpdate = true;
+      for (const k of ['bee', 'beeFur', 'wasp', 'beeWing', 'waspWing']) meshes[k].instanceMatrix.needsUpdate = true;
     }
     stepParticles(dt);
+    world.update(clockT, rdt);
+    swarm.update(Math.min(dt, 0.033), clockT);
     // the sun's shadow box follows the board
     sun.shadow.camera.left = sun.shadow.camera.bottom = -9; sun.shadow.camera.right = sun.shadow.camera.top = 9;
     sun.shadow.camera.updateProjectionMatrix();
-    renderer.render(scene, camera);
+    // keep the sharp band on the board
+    tmpV.set(0, 0, 0).project(camera);
+    tiltH.uniforms.uFocus.value = tiltV.uniforms.uFocus.value = (tmpV.y + 1) / 2;
+    composer.render();
   }
   const loop = (now) => { update(now); requestAnimationFrame(loop); };
   resize();

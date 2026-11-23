@@ -40,15 +40,18 @@ function finish(parts) {
 // ------------------------------------------------------------------ bee
 const BEE_YELLOW = col('#ffc21a'), BEE_DARK = col('#3a2210'), WHITE = col('#ffffff'), CHEEK = col('#ff8a8a');
 
+/** Bee stripes by position along the body: dark bands, a dark tail tip, a yellow face. */
+function beeStripe(v) {
+  const x = v.x / 0.42; // -1 tail .. +1 face
+  if (x > 0.42) return BEE_YELLOW;
+  if (x < -0.78) return BEE_DARK;
+  return Math.sin((x + 1) * Math.PI * 2.1) > 0.25 ? BEE_DARK : BEE_YELLOW;
+}
+const BEE_BODY = { s: [1.24, 0.98, 1], p: [0, 0.42, 0] };
+
 export function beeBody() {
   // round body, bands across it: dark where the stripe function says so, yellow face at the front
-  const body = part(new THREE.SphereGeometry(0.34, 40, 24), (v) => {
-    const x = v.x / 0.42; // -1 tail .. +1 face
-    if (x > 0.42) return BEE_YELLOW;
-    if (x < -0.78) return BEE_DARK;
-    const band = Math.sin((x + 1) * Math.PI * 2.1);
-    return band > 0.25 ? BEE_DARK : BEE_YELLOW;
-  }, { s: [1.24, 0.98, 1], p: [0, 0.42, 0] });
+  const body = part(new THREE.SphereGeometry(0.34, 40, 24), beeStripe, BEE_BODY);
   const parts = [body];
   for (const z of [-0.12, 0.12]) {
     parts.push(part(new THREE.SphereGeometry(0.075, 16, 12), BEE_DARK, { s: [0.8, 1.15, 1], p: [0.385, 0.5, z] }));          // eye
@@ -68,6 +71,45 @@ export function beeBody() {
     parts.push(part(new THREE.CapsuleGeometry(0.022, 0.1, 3, 6), BEE_DARK, { r: [z > 0 ? 0.35 : -0.35, 0, 0], p: [x, 0.1, z] }));
   }
   return finish(parts);
+}
+
+/**
+ * Fur, by shell texturing: the body is repeated `layers` times, each copy marked with how far out
+ * it sits (aLayer 0..1). A shader pushes each shell out along the normal and cuts it into strands
+ * with a noise test that gets stricter further out, so the outer shells are sparse tips: fuzz.
+ * aMask fades the fur off the face so the eyes stay clear.
+ */
+export function beeFur(layers = 6) {
+  const shells = [];
+  for (let k = 1; k <= layers; k++) {
+    const g = part(new THREE.SphereGeometry(0.34, 28, 16), beeStripe, BEE_BODY);
+    const n = g.attributes.position.count;
+    const layer = new Float32Array(n).fill(k / layers), mask = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = g.attributes.position.getX(i);
+      mask[i] = x < 0.24 ? 1 : Math.max(0, 1 - (x - 0.24) / 0.08); // no fur on the face
+    }
+    g.setAttribute('aLayer', new THREE.BufferAttribute(layer, 1));
+    g.setAttribute('aMask', new THREE.BufferAttribute(mask, 1));
+    shells.push(g);
+  }
+  return finish(shells);
+}
+
+/** Turn a standard material into a fur-shell material (see beeFur). */
+export function furMaterial(length = 0.05) {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uFurLen = { value: length };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aLayer;\nattribute float aMask;\nuniform float uFurLen;\nvarying float vLayer;\nvarying float vMask;\nvarying vec3 vFurP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFurP = position;\nvLayer = aLayer;\nvMask = aMask;\ntransformed += normalize(objectNormal) * aLayer * uFurLen;\ntransformed.y -= aLayer * aLayer * uFurLen * 0.25;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vLayer;\nvarying float vMask;\nvarying vec3 vFurP;\nfloat furHash(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }')
+      .replace('#include <color_fragment>', '#include <color_fragment>\nfloat strand = furHash(floor(vFurP * 150.0));\nif (vMask < 0.5 || strand < vLayer * 0.9 + 0.05) discard;\ndiffuseColor.rgb *= mix(0.72, 1.18, vLayer);');
+  };
+  m.customProgramCacheKey = () => 'bee-fur';
+  return m;
 }
 
 // ------------------------------------------------------------------ wasp

@@ -39,12 +39,23 @@ There are four boards: **Classic** (three gaps in the middle), **Quick** (small 
 | `src/bin/selfplay.rs` | Plays the difficulty levels against each other on every board, to check each is stronger than the one below and fast enough. |
 | `web/engine.js` | Loads `hivewise.wasm`, wraps the exports, and runs the AI in a Web Worker (`ai.worker.js`) so the animation never stutters while it thinks. |
 | `web/scene.js` | The 3D world: a floating wax-and-rock island over a meadow, sky, sun and shadows, and every animation (flights, flips, end-of-game fill, celebrations). Cells, bodies, wings and rings are instanced meshes, so the whole board is a handful of draw calls. |
+| `web/world.js` | Everything around the board: floating islands (one with the bees' straw hive, one with a tree holding the wasps' paper nest), flowers on the rim, trees and a pond on the meadow below, light shafts and drifting pollen. |
+| `web/swarm.js` | A flock of little bees (boids: separation, alignment, cohesion) that loops around the board, sweeps over big captures and circles the winners. |
 | `web/models.js` | The bee and wasp, built from primitives in code with their stripes and faces baked into vertex colours. |
 | `web/main.js` | Screens, turns, input, undo, hints, sound (a tiny synth, no audio files) and saved settings. |
 | `web/vendor/three/` | Three.js r170, the few modules the game uses. |
 
-Tap during an animation to fast-forward it. The title screen plays a live game between two AIs on a
-random board.
+Tap during an animation to fast-forward it. Drag to turn and tilt the board, pinch or scroll to zoom
+out and see the world around it. The title screen plays a live game between two AIs on a random board.
+
+### Graphics
+
+- **Fuzzy bees:** shell-texturing fur, with each bee's body repeated in a few slightly larger layers
+  that a shader cuts into strands, sparser towards the tips. Wasps are glossy, with a clear coat.
+- **Iridescent wings:** thin-film interference (soap-bubble colours) on every wing.
+- **Swarm:** boids flocking, kept off the playing area so pieces stay clear.
+- **Tilt-shift:** a two-pass blur above and below the board gives it the look of a photographed
+  miniature. If frames run slow on a phone, the game turns the blur off and lowers the resolution.
 
 ### Testing
 
