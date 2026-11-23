@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#ffe9a8">
+<meta name="description" content="Hivewise: a honeycomb puzzle. Spread your hive, pollinate the meadow, outwit the wasps.">
+<title>Hivewise</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sky: #fff6d6; --sky2: #ffe39a; --wax: #f7c948; --wax-dk: #d99a1e; --ink: #4a2c0f; --ink-2: #7a5326;
+    --leaf: #5fb35f; --rose: #ff7aa2; --card: #fffaf0; --shadow: 0 6px 0 #d99a1e, 0 10px 24px rgba(122, 83, 38, .25);
+    --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--sky); color: var(--ink);
+    font-family: 'Fredoka', ui-rounded, 'Segoe UI', system-ui, sans-serif; user-select: none; -webkit-user-select: none; }
+  body { display: flex; flex-direction: column; height: 100dvh; background: transparent; } /* lets the meadow canvas show through */
+  button { font: inherit; color: inherit; border: 0; cursor: pointer; }
+  .hidden { display: none !important; }
+
+  /* ---------- screens ---------- */
+  .screen { position: absolute; inset: 0; display: flex; flex-direction: column; padding: calc(var(--safe-t) + 12px) 16px calc(var(--safe-b) + 14px); }
+  #bg { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%; }
+
+  /* title */
+  #title { align-items: center; justify-content: center; gap: 18px; text-align: center; }
+  #title h1 { margin: 0; font-size: clamp(54px, 17vw, 92px); line-height: .9; letter-spacing: -1px; color: var(--ink);
+    text-shadow: 0 4px 0 var(--wax), 0 8px 0 var(--wax-dk); }
+  #title p { margin: 0; font-size: 18px; color: var(--ink-2); font-weight: 600; }
+  #title-bee { width: 160px; height: 140px; }
+  .big { background: var(--wax); padding: 16px 44px; border-radius: 22px; font-size: 24px; font-weight: 700; box-shadow: var(--shadow); transition: transform .08s; }
+  .big:active { transform: translateY(4px); box-shadow: 0 2px 0 #d99a1e; }
+
+  /* level map */
+  #map header, #game header { display: flex; align-items: center; gap: 10px; min-height: 48px; }
+  #map h2 { margin: 0; font-size: 26px; flex: 1; }
+  .icon-btn { width: 48px; height: 48px; border-radius: 16px; background: var(--card); box-shadow: 0 3px 0 #e3c27a; display: grid; place-items: center; font-size: 22px; font-weight: 700; flex: none; }
+  .icon-btn:active { transform: translateY(2px); box-shadow: none; }
+  .icon-btn svg { width: 24px; height: 24px; }
+  #comb { flex: 1; overflow-y: auto; padding: 10px 0 30px; --hw: min(29vw, 124px); --hh: calc(var(--hw) * 1.1547); }
+  .comb-row { display: flex; justify-content: center; gap: 6px; }
+  .comb-row + .comb-row { margin-top: calc(var(--hh) * -0.25 + 5px); }
+  .lv { width: var(--hw); height: var(--hh); flex: none; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+    background: linear-gradient(#ffd75e, var(--wax)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+  .lv b { font-size: 30px; line-height: 1; }
+  .lv small { font-size: 11px; font-weight: 600; max-width: 80%; text-align: center; line-height: 1.1; color: var(--ink-2); }
+  .lv .st { font-size: 14px; letter-spacing: 1px; color: #b7791f; }
+  .lv .st i { font-style: normal; opacity: .3; }
+  .lv .st i.on { opacity: 1; color: #fff; text-shadow: 0 1px 0 #b7791f; }
+  /* the hive fills up: solved cells hold honey, three-star cells shimmer */
+  .lv { position: relative; overflow: hidden; }
+  .lv > * { position: relative; z-index: 1; }
+  .lv.done { background: linear-gradient(170deg, #fff3b0 0%, #ffd75e 18%, #ffb300 60%, #f08c00 100%); color: #5a3206; }
+  .lv.done::before { content: ''; position: absolute; left: 18%; top: 20%; width: 30%; height: 12%; border-radius: 50%; background: rgba(255,255,255,.55); transform: rotate(-25deg); }
+  .lv.done small { color: #6b3d08; }
+  .lv.gold::after { content: ''; position: absolute; inset: -40%; background: linear-gradient(115deg, transparent 40%, rgba(255,255,255,.65) 50%, transparent 60%); animation: shine 3.2s ease-in-out infinite; }
+  .lv.gold:nth-child(2n)::after { animation-delay: 1.1s; }
+  @keyframes shine { 0% { transform: translateX(-60%); } 55%, 100% { transform: translateX(60%); } }
+  #hive-meter { display: flex; align-items: center; gap: 10px; max-width: 360px; margin: 2px auto 8px; width: 100%; font-weight: 600; font-size: 14px; color: var(--ink-2); }
+  #hive-meter .bar { flex: 1; height: 14px; border-radius: 99px; background: #f1dfab; overflow: hidden; box-shadow: inset 0 2px 0 rgba(0,0,0,.06); }
+  #hive-meter .bar i { display: block; height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #ffd75e, #ffa600); transition: width .8s cubic-bezier(.2,1,.3,1); }
+  #map-bee { position: absolute; width: 64px; height: 56px; pointer-events: none; z-index: 3; transition: left .8s, top .8s; }
+  .lv.locked { background: #ecd9a6; color: #b9a173; }
+  .lv.locked small, .lv.locked .st { visibility: hidden; }
+  .lv.next { background: linear-gradient(#fff0a8, #ffd75e); animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 50% { filter: brightness(1.08); } }
+
+  /* game */
+  #game { padding-left: 10px; padding-right: 10px; }
+  #lvl-title { flex: 1; min-width: 0; }
+  #lvl-title b { display: block; font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #lvl-title span { font-size: 13px; color: var(--ink-2); font-weight: 600; }
+  #nectar { display: flex; gap: 3px; justify-content: center; flex-wrap: wrap; min-height: 22px; margin: 4px 0 0; }
+  #nectar i { width: 13px; height: 17px; border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%; background: #ffb21e; box-shadow: inset -2px -3px 0 rgba(0,0,0,.12); transform: rotate(180deg); transition: opacity .3s, transform .3s; }
+  #nectar i.par { background: #ff8a00; }
+  #nectar i.used { opacity: .18; transform: rotate(180deg) scale(.8); }
+  #stage { position: relative; flex: 1; min-height: 0; }
+  #board { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  #tip { position: absolute; left: 6px; right: 6px; top: 6px; background: var(--card); border-radius: 18px; padding: 12px 16px; font-size: 16px; font-weight: 500; line-height: 1.3; box-shadow: 0 4px 0 #e3c27a; transition: opacity .3s, transform .3s; pointer-events: none; }
+  #tip.off { opacity: 0; transform: translateY(-8px); }
+  #tools { display: flex; justify-content: center; gap: 14px; padding-top: 8px; }
+  .tool { display: flex; flex-direction: column; align-items: center; gap: 2px; background: var(--card); border-radius: 18px; padding: 8px 0 6px; width: 84px; box-shadow: 0 3px 0 #e3c27a; font-size: 13px; font-weight: 600; }
+  .tool svg { width: 26px; height: 26px; }
+  .tool:active { transform: translateY(2px); box-shadow: none; }
+  .tool:disabled { opacity: .45; }
+
+  /* result sheet */
+  #sheet { position: fixed; inset: 0; display: flex; align-items: flex-end; justify-content: center; background: rgba(74, 44, 15, .35); z-index: 10; padding: 16px 16px calc(var(--safe-b) + 16px); }
+  #sheet .card { width: 100%; max-width: 420px; background: var(--card); border-radius: 28px; padding: 22px 20px 20px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.25); animation: up .35s cubic-bezier(.2,1.4,.4,1); }
+  @keyframes up { from { transform: translateY(60%); } }
+  #sheet h3 { margin: 0 0 4px; font-size: 30px; }
+  #sheet p { margin: 0 0 14px; color: var(--ink-2); font-weight: 500; }
+  #sheet .stars { font-size: 46px; letter-spacing: 6px; margin: 4px 0 8px; }
+  #sheet .stars i { font-style: normal; display: inline-block; color: #e8d6a8; }
+  #sheet .stars i.on { color: #ffb21e; animation: pop .5s cubic-bezier(.2,1.8,.4,1) both; text-shadow: 0 3px 0 #d99a1e; }
+  #sheet .stars i.on:nth-child(2) { animation-delay: .15s; } #sheet .stars i.on:nth-child(3) { animation-delay: .3s; }
+  @keyframes pop { from { transform: scale(0) rotate(-40deg); } }
+  #sheet .row { display: flex; gap: 10px; justify-content: center; }
+  #sheet .row button { flex: 1; padding: 14px; border-radius: 18px; font-size: 18px; font-weight: 700; background: #f3e3b8; }
+  #sheet .row button.go { background: var(--wax); box-shadow: 0 4px 0 #d99a1e; }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<section id="title" class="screen">
+  <canvas id="title-bee" width="320" height="280"></canvas>
+  <h1>Hive<br>wise</h1>
+  <p>Spread your hive. Pollinate the meadow.<br>Outwit the wasps.</p>
+  <button class="big" id="btn-play">Play</button>
+</section>
+
+<section id="map" class="screen hidden">
+  <header>
+    <button class="icon-btn" id="map-back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <h2>The Meadow</h2>
+    <span id="star-total" style="font-weight:700;font-size:18px"></span>
+  </header>
+  <div id="hive-meter"><span>Hive</span><div class="bar"><i></i></div><span id="hive-pct">0%</span></div>
+  <div id="comb"></div>
+  <canvas id="map-bee" width="128" height="112"></canvas>
+</section>
+
+<section id="game" class="screen hidden">
+  <header>
+    <button class="icon-btn" id="game-back" aria-label="Levels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+    <div id="lvl-title"><b></b><span></span></div>
+    <button class="icon-btn" id="btn-sound" aria-label="Sound">♪</button>
+  </header>
+  <div id="nectar" aria-label="Nectar"></div>
+  <div id="stage">
+    <canvas id="board"></canvas>
+    <div id="tip" class="off"></div>
+  </div>
+  <div id="tools">
+    <button class="tool" id="btn-undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg>Undo</button>
+    <button class="tool" id="btn-restart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/></svg>Restart</button>
+    <button class="tool" id="btn-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4"/><path d="M12 2a7 7 0 00-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0012 2z"/></svg>Hint</button>
+  </div>
+</section>
+
+<div id="sheet" class="hidden"><div class="card">
+  <h3></h3>
+  <div class="stars"></div>
+  <p></p>
+  <div class="row"></div>
+</div></div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
